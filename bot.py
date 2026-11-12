@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 
 # === Налаштування з Railway Variables ===
-TELEGRAM_TOKEN = os.environ.get("AAFkp0ipNVLPvW6LzwsKqVFEVBUqYAxL1cc")
+TELEGRAM_TOKEN = os.environ.get("9125931506:AAFkp0ipNVLPvW6LzwsKqVFEVBUqYAxL1cc")
 CHAT_ID = os.environ.get("9125931506")
 STREET_ID = 37319                 # 2 пров. Івана Виговського
 CHECK_INTERVAL = 300              # 5 хвилин
