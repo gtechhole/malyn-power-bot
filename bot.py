@@ -1,6 +1,5 @@
 import requests
 import time
-import json
 import os
 from datetime import datetime
 
@@ -10,8 +9,6 @@ CHAT_ID = os.environ.get("CHAT_ID")
 STREET_ID = 37319
 CHECK_INTERVAL = 300  # 5 хвилин
 
-STATE_FILE = "last_outages.json"
-
 API_ACCIDENTS = f"https://api-ztoe-poweron.inneti.net/api/pw_accidents?street.id={STREET_ID}&pagination=false"
 API_PLANNED = f"https://api-ztoe-poweron.inneti.net/api/pw_accident_planeds?street.id={STREET_ID}&pagination=false"
 
@@ -20,41 +17,28 @@ HEADERS = {
     "Accept": "application/ld+json"
 }
 
+# Стан в пам'яті (не скидається під час роботи)
+known_ids = set()
 last_update_id = 0
-
-def load_state():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                return set(json.load(f))
-        except:
-            return set()
-    return set()
-
-def save_state(ids):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(list(ids), f)
+initialized = False
 
 def send_telegram(text, chat_id=None):
     if not TELEGRAM_TOKEN:
-        print("Немає TELEGRAM_TOKEN")
         return
 
     target = chat_id or CHAT_ID
     if not target:
-        print("Немає CHAT_ID")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     for chat in str(target).split(","):
         try:
-            r = requests.post(url, json={
+            requests.post(url, json={
                 "chat_id": chat.strip(),
                 "text": text,
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True
             }, timeout=10)
-            print(f"Відправка: {r.status_code}")
         except Exception as e:
             print(f"Помилка відправки: {e}")
 
@@ -88,32 +72,38 @@ def get_outages(api_url):
         return []
 
 def check_outages(notify=True):
+    global known_ids, initialized
+
     accidents = get_outages(API_ACCIDENTS)
     planned = get_outages(API_PLANNED)
 
-    known = load_state()
     current_ids = set()
     new_messages = []
 
     for item in accidents:
         oid = f"a_{item.get('id')}"
         current_ids.add(oid)
-        if oid not in known and notify:
+        if oid not in known_ids and notify and initialized:
             new_messages.append(format_outage(item, is_planned=False))
 
     for item in planned:
         oid = f"p_{item.get('id')}"
         current_ids.add(oid)
-        if oid not in known and notify:
+        if oid not in known_ids and notify and initialized:
             new_messages.append(format_outage(item, is_planned=True))
 
+    # Надсилаємо тільки справді нові
     for msg in new_messages:
         send_telegram(msg)
+        print("Надіслано нове сповіщення")
 
-    if known and not current_ids and notify:
+    # Якщо раніше були відключення, а зараз немає
+    if known_ids and not current_ids and notify and initialized:
         send_telegram("✅ <b>Відключення знято</b>\n\nНа 2 пров. Івана Виговського зараз немає відключень.")
 
-    save_state(current_ids)
+    known_ids = current_ids
+    initialized = True
+
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Аварійних: {len(accidents)}, Планових: {len(planned)}")
     return accidents, planned
 
@@ -151,7 +141,7 @@ def handle_commands():
                     chat_id=chat_id
                 )
 
-            elif text == "/status" or text == "/check":
+            elif text in ["/status", "/check"]:
                 accidents, planned = check_outages(notify=False)
                 if not accidents and not planned:
                     send_telegram("✅ Зараз відключень немає.", chat_id=chat_id)
@@ -174,10 +164,15 @@ def handle_commands():
 
 if __name__ == "__main__":
     print("Бот запущено...")
-    if TELEGRAM_TOKEN and CHAT_ID:
-        send_telegram("🔌 Бот запущено (аварійні + планові)\n📍 Малин, 2 пров. Івана Виговського")
     
-    last_check = 0
+    # При старті запам'ятовуємо поточні відключення (щоб не спамити)
+    check_outages(notify=False)
+    
+    if TELEGRAM_TOKEN and CHAT_ID:
+        send_telegram("🔌 Бот запущено\n📍 Малин, 2 пров. Івана Виговського\n\nТепер повідомлення приходитимуть тільки при появі нових відключень.")
+    
+    last_check = time.time()
+    
     while True:
         handle_commands()
         
